@@ -24,10 +24,10 @@
     "template",
     "extract"
   ],
-  "author": "pascal-desmet_vdw",
+  "author": "vdwpsmt",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pascal-desmet_vdw/node-red-contrib-flow-splitter-extended.git"
+    "url": "https://github.com/vdwpsmt/node-red-contrib-flow-splitter-extended.git"
   },
   "license": "Apache-2.0",
   "dependencies": {
