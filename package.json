@@ -27,7 +27,7 @@
   "author": "pascal-desmet_vdw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vgo-exo/node-red-contrib-flow-splitter-extended"
+    "url": "https://github.com/pascal-desmet_vdw/node-red-contrib-flow-splitter-extended.git"
   },
   "license": "Apache-2.0",
   "dependencies": {
