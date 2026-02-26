@@ -22,13 +22,18 @@ It will make the diffs of your version control much more controlled and readable
 - Supports both YAML and JSON formats
 - Maintains tab order through configuration
 
-### Function & Template Extraction (NEW)
-- Automatically extracts code from `function` nodes into `.js` files
-- Extracts `ui-template` (Dashboard 2.0) content into `.vue` files
-- Supports function `initialize` and `finalize` code in separate files
-- Extracts node `info` documentation into `.md` files
+### Optional Function & Template Extraction and Restore (NEW)
+- Automatically extracts into seperate files per function/ui-template
+  - Extracts code from `function` nodes into `.js` files
+  - Extracts `ui-template` (Dashboard 2.0) content into `.vue` files
+  - Supports function `initialize` and `finalize` code in separate files
+  - Extracts node `info` documentation into `.md` files
 - Organizes extracted files in subdirectories alongside their parent tab/subflow
-- Automatically syncs changes back to Node-RED on startup
+- Restores changes back to Node-RED
+  - Automatically on startup
+  - Manually reload using endpoint
+- Both extraction (default true) and restoring (default false) can be changed in `.config.flow-splitter.json`
+
 
 ## Functioning
 
@@ -81,7 +86,7 @@ fetch('http://localhost:1880/flow-splitter/reload', {method: 'POST'})
 ```
 
 This allows you to:
-1. Edit function/template files in VS Code
+1. Edit function/template files in VS Code or any other IDE
 2. Save changes
 3. Run the reload command
 4. See changes immediately in Node-RED (without deploy/restart)
@@ -124,7 +129,8 @@ Default configuration file =
   "fileFormat": "yaml",
   "destinationFolder": "src",
   "tabsOrder": [],
-  "extractFunctionsTemplates": true
+  "extractFunctionsTemplates": true,
+  "restoreFunctionsTemplates": false
 }
 ```
 

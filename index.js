@@ -30,7 +30,8 @@ const DEFAULT_CFG = {
     destinationFolder: 'src',
     tabsOrder: [],
     monolithFilename: "flows.json",
-    extractFunctionsTemplates: true
+    extractFunctionsTemplates: true,
+    restoreFunctionsTemplates: false
 }
 
 /**
@@ -113,6 +114,142 @@ function extractFunctionsTemplatesFromSplitFiles(cfg, projectPath) {
 
     processFlowDirectory(tabsDir, cfg.fileFormat, 'tab')
     processFlowDirectory(subflowsDir, cfg.fileFormat, 'subflow')
+    
+    // Clean up orphaned directories from renamed/deleted flows
+    cleanupOrphanedDirectories(tabsDir, cfg.fileFormat)
+    cleanupOrphanedDirectories(subflowsDir, cfg.fileFormat)
+}
+
+/**
+ * Remove subdirectories that don't have a corresponding flow file
+ * @param {string} dir - Directory to clean (tabs or subflows)
+ * @param {string} fileFormat - File format (yaml or json)
+ */
+function cleanupOrphanedDirectories(dir, fileFormat) {
+    if (!fs.existsSync(dir)) {
+        return
+    }
+
+    const extension = fileFormat === 'yaml' ? '.yaml' : '.json'
+    
+    // Get all flow files
+    const flowFiles = fs.readdirSync(dir)
+        .filter(f => f.endsWith(extension))
+        .map(f => path.basename(f, extension))
+    
+    // Get all subdirectories
+    const subdirs = fs.readdirSync(dir)
+        .filter(f => {
+            const fullPath = path.join(dir, f)
+            return fs.statSync(fullPath).isDirectory()
+        })
+    
+    // Remove orphaned subdirectories
+    subdirs.forEach(subdir => {
+        if (!flowFiles.includes(subdir)) {
+            const subdirPath = path.join(dir, subdir)
+            try {
+                fs.rmSync(subdirPath, { recursive: true, force: true })
+                RED.log.info(`[node-red-contrib-flow-splitter-extended] Removed orphaned directory: ${subdir}`)
+            } catch (error) {
+                RED.log.warn(`[node-red-contrib-flow-splitter-extended] Could not remove orphaned directory ${subdir}: ${error.message}`)
+            }
+        }
+    })
+}
+
+/**
+ * Clean up old flow files when a tab or subflow has been renamed.
+ * Scans existing files and removes those with IDs that match current flows but have different filenames.
+ * @param {Array} flowNodes - Array of all flow nodes from Node-RED
+ * @param {object} cfg - Splitter configuration
+ * @param {string} projectPath - Path to the project
+ */
+function cleanupRenamedFlows(flowNodes, cfg, projectPath) {
+    const srcDir = path.join(projectPath, cfg.destinationFolder || 'src')
+    const tabsDir = path.join(srcDir, 'tabs')
+    const subflowsDir = path.join(srcDir, 'subflows')
+    const extension = cfg.fileFormat === 'yaml' ? '.yaml' : '.json'
+
+    // Build maps of ID -> expected filename from the current flow nodes
+    const tabsIdToFilename = new Map()
+    const subflowsIdToFilename = new Map()
+
+    flowNodes.forEach(node => {
+        if (node.type === 'tab' && node.id) {
+            // Use normalizedLabel if available, otherwise compute from label
+            const label = node.label || node.id
+            const expectedFilename = node.normalizedLabel || 
+                label.replace(/[\/\\:*?"<>|]/g, '-').toLowerCase().replace(/\s+/g, '-')
+            tabsIdToFilename.set(node.id, expectedFilename)
+        } else if (node.type === 'subflow' && node.id) {
+            const name = node.name || node.id
+            const expectedFilename = name.replace(/[\/\\:*?"<>|]/g, '-').toLowerCase().replace(/\s+/g, '-')
+            subflowsIdToFilename.set(node.id, expectedFilename)
+        }
+    })
+
+    // Clean up tabs directory
+    cleanupRenamedFlowsInDir(tabsDir, tabsIdToFilename, extension, 'tab')
+    
+    // Clean up subflows directory
+    cleanupRenamedFlowsInDir(subflowsDir, subflowsIdToFilename, extension, 'subflow')
+}
+
+/**
+ * Clean up renamed flows in a specific directory.
+ * Removes old files when the same ID exists but with a different filename.
+ * @param {string} dir - Directory to scan
+ * @param {Map} idToFilename - Map of ID to expected filename
+ * @param {string} extension - File extension (.yaml or .json)
+ * @param {string} flowType - Type of flow (tab or subflow)
+ */
+function cleanupRenamedFlowsInDir(dir, idToFilename, extension, flowType) {
+    if (!fs.existsSync(dir)) {
+        return
+    }
+
+    const files = fs.readdirSync(dir).filter(f => f.endsWith(extension))
+
+    files.forEach(file => {
+        const filePath = path.join(dir, file)
+        const filename = path.basename(file, extension)
+
+        try {
+            let flowData
+            const fileContent = fs.readFileSync(filePath, 'utf8')
+
+            if (extension === '.yaml') {
+                flowData = yaml.load(fileContent)
+            } else {
+                flowData = JSON.parse(fileContent)
+            }
+
+            const flowDataArray = Array.isArray(flowData) ? flowData : [flowData]
+            const flowNode = flowDataArray.find(n => n.type === flowType)
+
+            if (flowNode && flowNode.id) {
+                const expectedFilename = idToFilename.get(flowNode.id)
+                
+                // If this ID exists in current flows but with a different filename, this is an old renamed file
+                if (expectedFilename && expectedFilename !== filename) {
+                    RED.log.info(`[node-red-contrib-flow-splitter-extended] Removing old ${flowType} file "${file}" (renamed to "${expectedFilename}${extension}")`)
+                    
+                    // Remove the old flow file
+                    fs.unlinkSync(filePath)
+                    
+                    // Remove the corresponding subdirectory if it exists
+                    const subdirPath = path.join(dir, filename)
+                    if (fs.existsSync(subdirPath) && fs.statSync(subdirPath).isDirectory()) {
+                        fs.rmSync(subdirPath, { recursive: true, force: true })
+                        RED.log.info(`[node-red-contrib-flow-splitter-extended] Removed old ${flowType} directory "${filename}"`)
+                    }
+                }
+            }
+        } catch (error) {
+            RED.log.warn(`[node-red-contrib-flow-splitter-extended] Error checking ${flowType} file ${file}: ${error.message}`)
+        }
+    })
 }
 
 /**
@@ -153,12 +290,12 @@ function processFlowDirectory(dir, fileFormat, flowType) {
 }
 
 /**
- * Collect functions and templates back into split flow files before rebuilding monolith
+ * Restore functions and templates back into split flow files before rebuilding single flows.json file
  * @param {object} cfg - Splitter configuration
  * @param {string} projectPath - Path to the project
  */
-function collectFunctionsTemplatesIntoSplitFiles(cfg, projectPath) {
-    if (cfg.extractFunctionsTemplates === false) {
+function restoreFunctionsTemplatesIntoSplitFiles(cfg, projectPath) {
+    if (cfg.restoreFunctionsTemplates === false) {
         return
     }
 
@@ -166,19 +303,19 @@ function collectFunctionsTemplatesIntoSplitFiles(cfg, projectPath) {
     const tabsDir = path.join(srcDir, 'tabs')
     const subflowsDir = path.join(srcDir, 'subflows')
 
-    RED.log.info("[node-red-contrib-flow-splitter-extended] Collecting functions and templates...")
+    RED.log.info("[node-red-contrib-flow-splitter-extended] Restoring functions and templates...")
 
-    collectFromFlowDirectory(tabsDir, cfg.fileFormat, 'tab')
-    collectFromFlowDirectory(subflowsDir, cfg.fileFormat, 'subflow')
+    restoreIntoFlowDirectory(tabsDir, cfg.fileFormat, 'tab')
+    restoreIntoFlowDirectory(subflowsDir, cfg.fileFormat, 'subflow')
 }
 
 /**
- * Process a directory of flow files to collect functions/templates
+ * Process a directory of flow files to restore functions/templates
  * @param {string} dir - Directory to process
  * @param {string} fileFormat - File format (yaml or json)
  * @param {string} flowType - Type of flow (tab or subflow)
  */
-function collectFromFlowDirectory(dir, fileFormat, flowType) {
+function restoreIntoFlowDirectory(dir, fileFormat, flowType) {
     if (!fs.existsSync(dir)) {
         return
     }
@@ -201,7 +338,7 @@ function collectFromFlowDirectory(dir, fileFormat, flowType) {
             }
 
             let flowNodes = Array.isArray(flowData) ? flowData : [flowData]
-            flowNodes = functionsTemplatesHandler.collectFunctionsAndTemplates(flowNodes, flowName, dir, RED)
+            flowNodes = functionsTemplatesHandler.restoreFunctionsAndTemplates(flowNodes, flowName, dir, RED)
 
             if (fileFormat === 'yaml') {
                 const yamlContent = yaml.dump(flowNodes, {
@@ -216,14 +353,14 @@ function collectFromFlowDirectory(dir, fileFormat, flowType) {
             }
 
         } catch (error) {
-            RED.log.warn(`[node-red-contrib-flow-splitter-extended] Error collecting ${flowType} ${flowName}: ${error.message}`)
+            RED.log.warn(`[node-red-contrib-flow-splitter-extended] Error restoring ${flowType} ${flowName}: ${error.message}`)
         }
     })
 }
 
 /**
  * Manual reload endpoint handler
- * Collects functions/templates from files and reloads flows
+ * Restores functions/templates from files and reloads flows
  */
 async function manualReload(req, res) {
     try {
@@ -232,7 +369,7 @@ async function manualReload(req, res) {
         const projectPath = getProjectPath()
         const cfg = loadSplitterConfig(projectPath)
 
-        collectFunctionsTemplatesIntoSplitFiles(cfg, projectPath)
+        restoreFunctionsTemplatesIntoSplitFiles(cfg, projectPath)
 
         const flowSet = manager.constructFlowSetFromTreeFiles(cfg, projectPath)
 
@@ -278,9 +415,9 @@ async function onFlowReload(flowEventData) {
 
     if (flowEventData.config.flows.length === 0) {
         // The flow file does not exist or is empty - rebuild from split files
-        RED.log.info("[node-red-contrib-flow-splitter-extended] Rebuilding monolith file from source files")
+        RED.log.info("[node-red-contrib-flow-splitter-extended] Rebuilding single flows.json file from source files")
         
-        collectFunctionsTemplatesIntoSplitFiles(cfg, projectPath)
+        restoreFunctionsTemplatesIntoSplitFiles(cfg, projectPath)
         
         const flowSet = manager.constructFlowSetFromTreeFiles(cfg, projectPath)
 
@@ -303,6 +440,9 @@ async function onFlowReload(flowEventData) {
     }
 
     // Flows exist - split into source files
+    // First, clean up any old files from renamed tabs/subflows
+    cleanupRenamedFlows(flowEventData.config.flows, cfg, projectPath)
+
     const flowSet = manager.constructFlowSetFromMonolithObject(flowEventData.config.flows)
 
     const updatedCfg = manager.constructTreeFilesFromFlowSet(flowSet, cfg, projectPath)

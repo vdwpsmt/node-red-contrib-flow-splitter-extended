@@ -4,7 +4,7 @@ const fs = require('fs-extra')
 /**
  * Functions and Templates nodes Handler
  * Extracts function and ui-template node code into separate files
- * and collects them back when rebuilding flows
+ * and restores them back when rebuilding flows
  */
 
 /**
@@ -18,6 +18,12 @@ function extractFunctionsAndTemplates(flowNodes, flowName, flowDir, RED) {
     if (!flowNodes || flowNodes.length === 0) return
 
     const extractedDir = path.join(flowDir, flowName)
+    
+    // Delete entire extracted directory to ensure fresh state
+    if (fs.existsSync(extractedDir)) {
+        fs.removeSync(extractedDir)
+    }
+    
     const manifest = {}
     const fileNames = []
     let count = 0
@@ -124,20 +130,17 @@ function extractFunctionsAndTemplates(flowNodes, flowName, flowDir, RED) {
         
         RED.log.info(`[node-red-contrib-flow-splitter] Extracted ${count} functions/templates for "${flowName}"`)
     }
-
-    // Clean up unused files
-    cleanupUnusedFiles(extractedDir, manifest, RED)
 }
 
 /**
- * Collect functions and templates from separate files back into flow nodes
+ * Restore functions and templates from separate files back into flow nodes
  * @param {Array} flowNodes - Array of nodes from a tab or subflow
  * @param {string} flowName - Name of the tab or subflow
  * @param {string} flowDir - Directory where the flow file is stored
  * @param {object} RED - Node-RED runtime
  * @returns {Array} - Updated flow nodes
  */
-function collectFunctionsAndTemplates(flowNodes, flowName, flowDir, RED) {
+function restoreFunctionsAndTemplates(flowNodes, flowName, flowDir, RED) {
     if (!flowNodes || flowNodes.length === 0) return flowNodes
 
     const extractedDir = path.join(flowDir, flowName)
@@ -225,77 +228,13 @@ function collectFunctionsAndTemplates(flowNodes, flowName, flowDir, RED) {
     })
 
     if (updatedCount > 0) {
-        RED.log.info(`[node-red-contrib-flow-splitter] Collected ${updatedCount} functions/templates for "${flowName}"`)
+        RED.log.info(`[node-red-contrib-flow-splitter] Restored ${updatedCount} functions/templates for "${flowName}"`)
     }
 
     return flowNodes
 }
 
-/**
- * Clean up files that are no longer in the manifest
- * @param {string} extractedDir - Directory containing extracted files
- * @param {object} manifest - Manifest object
- * @param {object} RED - Node-RED runtime
- */
-function cleanupUnusedFiles(extractedDir, manifest, RED) {
-    if (!fs.existsSync(extractedDir)) return
-
-    const validExtensions = ['.vue', '.js', '.md']
-    const files = getAllFiles(extractedDir, validExtensions)
-
-    files.forEach(file => {
-        // Skip manifest file
-        if (file.endsWith('.manifest.json')) return
-
-        let found = false
-        Object.keys(manifest).forEach((id) => {
-            const item = manifest[id]
-            if (file.indexOf(item.fileName) > -1) {
-                found = true
-            }
-        })
-
-        if (!found) {
-            const filePath = path.join(extractedDir, file)
-            try {
-                fs.removeSync(filePath)
-                RED.log.info(`[node-red-contrib-flow-splitter] Removed unused file: ${file}`)
-            } catch (error) {
-                RED.log.warn(`[node-red-contrib-flow-splitter] Could not remove file ${file}: ${error.message}`)
-            }
-        }
-    })
-}
-
-/**
- * Get all files with specified extensions from a directory
- * @param {string} dir - Directory to search
- * @param {Array<string>} exts - Array of extensions to match
- * @param {Array<string>} fileList - Accumulated file list
- * @param {string} relDir - Relative directory path
- * @returns {Array<string>} - List of file paths
- */
-function getAllFiles(dir, exts, fileList = [], relDir = '') {
-    if (!fs.existsSync(dir)) return fileList
-
-    const files = fs.readdirSync(dir)
-
-    files.forEach(file => {
-        const filePath = path.join(dir, file)
-        const relPath = path.join(relDir, file)
-        const stat = fs.statSync(filePath)
-
-        if (stat.isDirectory()) {
-            getAllFiles(filePath, exts, fileList, relPath)
-        } else if (exts.some(ext => file.endsWith(ext))) {
-            fileList.push(relPath)
-        }
-    })
-
-    return fileList
-}
-
 module.exports = {
     extractFunctionsAndTemplates,
-    collectFunctionsAndTemplates
+    restoreFunctionsAndTemplates
 }
